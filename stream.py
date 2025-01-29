@@ -53,7 +53,7 @@ st.sidebar.markdown(
     unsafe_allow_html=True,
 )
 
-menu = st.sidebar.radio("", ["Home", "Detection Model", "Resources"])
+menu = st.sidebar.radio("Go to:", ["Home", "Detection Model", "Resources"])
 
 # 🏠 Home Page
 if menu == "Home":
