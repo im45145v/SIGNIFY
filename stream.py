@@ -5,10 +5,17 @@ import numpy as np
 import pickle
 from collections import deque
 import time
+from streamlit_webrtc import webrtc_streamer, VideoTransformerBase
 
 # Load trained model
-model_dict = pickle.load(open('./model.p', 'rb'))
-model = model_dict['model']
+try:
+    model_dict = pickle.load(open('./model.p', 'rb'))
+    model = model_dict.get('model', None)  # Ensure we get the model or handle it if missing
+    if model is None:
+        raise ValueError("The model is missing in the pickle file.")
+except Exception as e:
+    st.error(f"Error loading model: {e}")
+    st.stop()
 
 # Initialize MediaPipe Hands
 mp_hands = mp.solutions.hands
@@ -136,86 +143,83 @@ elif menu == "Detection Model":
     if "prediction_queue" not in st.session_state:
         st.session_state["prediction_queue"] = deque(maxlen=5)
 
-    # Start Camera
-    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-    FRAME_WINDOW = st.image([])
+    class VideoTransformer(VideoTransformerBase):
+        def __init__(self):
+            self.data_aux = []
+            self.x_ = []
+            self.y_ = []
 
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            st.error("Camera not detected. Please check your permissions.")
-            break
+        def transform(self, frame):
+            frame = frame.to_ndarray(format="bgr24")
 
-        # Flip frame for mirrored effect
-        frame = cv2.flip(frame, 1)
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            H, W, _ = frame.shape
 
-        # Process with MediaPipe Hands
-        results = hands.process(frame_rgb)
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-        if results.multi_hand_landmarks:
-            data_aux = []
-            x_ = []
-            y_ = []
+            results = hands.process(frame_rgb)
+            if results.multi_hand_landmarks:
+                for hand_landmarks in results.multi_hand_landmarks:
+                    mp_drawing.draw_landmarks(
+                        frame,  # image to draw
+                        hand_landmarks,  # model output
+                        mp_hands.HAND_CONNECTIONS,  # hand connections
+                        mp_drawing_styles.get_default_hand_landmarks_style(),
+                        mp_drawing_styles.get_default_hand_connections_style()
+                    )
 
-            for hand_landmarks in results.multi_hand_landmarks:
-                mp_drawing.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+                for hand_landmarks in results.multi_hand_landmarks:
+                    for i in range(len(hand_landmarks.landmark)):
+                        x = hand_landmarks.landmark[i].x
+                        y = hand_landmarks.landmark[i].y
 
-                # Collect landmarks
-                for i in range(len(hand_landmarks.landmark)):
-                    x = hand_landmarks.landmark[i].x
-                    y = hand_landmarks.landmark[i].y
+                        self.x_.append(x)
+                        self.y_.append(y)
 
-                    x_.append(x)
-                    y_.append(y)
+                    for i in range(len(hand_landmarks.landmark)):
+                        x = hand_landmarks.landmark[i].x
+                        y = hand_landmarks.landmark[i].y
+                        self.data_aux.append(x - min(self.x_))
+                        self.data_aux.append(y - min(self.y_))
 
-                for i in range(len(hand_landmarks.landmark)):
-                    x = hand_landmarks.landmark[i].x
-                    y = hand_landmarks.landmark[i].y
-                    data_aux.append(x - min(x_))
-                    data_aux.append(y - min(y_))
+                x1 = int(min(self.x_) * W) - 10
+                y1 = int(min(self.y_) * H) - 10
 
-            # Initialize delete cooldown timestamp in session state
-            if "last_delete_time" not in st.session_state:
-                st.session_state["last_delete_time"] = 0  # Start at 0 so first delete can happen
+                x2 = int(max(self.x_) * W) - 10
+                y2 = int(max(self.y_) * H) - 10
 
-            # Make prediction
-            if len(data_aux) == model.n_features_in_:
-                prediction = model.predict([np.asarray(data_aux)])
-                predicted_character = labels_dict[int(prediction[0])]
+                # Check if the feature count matches the model's expected input
+                if hasattr(model, 'n_features_in_'):
+                    if len(self.data_aux) == model.n_features_in_:
+                        prediction = model.predict([np.asarray(self.data_aux)])
+                        predicted_character = labels_dict[int(prediction[0])]
 
-                # Stability check
-                st.session_state["prediction_queue"].append(predicted_character)
-                if len(st.session_state["prediction_queue"]) == st.session_state["prediction_queue"].maxlen and all(
-                        p == st.session_state["prediction_queue"][0] for p in st.session_state["prediction_queue"]
-                ):
-                    stable_character = st.session_state["prediction_queue"][0]
+                        # Add prediction to the queue
+                        st.session_state["prediction_queue"].append(predicted_character)
 
-                    # Handle delete with cooldown
-                    current_time = time.time()
-                    if stable_character == "delete":
-                        if current_time - st.session_state["last_delete_time"] >= 5:  # 5-second cooldown
-                            st.session_state["output_string"] = st.session_state["output_string"][
-                                                                :-1]  # Remove last character
-                            st.session_state["last_delete_time"] = current_time  # Update last delete time
-                    elif stable_character != st.session_state["last_stable_character"]:
-                        repeat_threshold = 1
-                        st.session_state["output_string"] += stable_character * repeat_threshold
-                        st.session_state["last_stable_character"] = stable_character
+                        # Only update the stable character if all recent predictions are the same
+                        if len(st.session_state["prediction_queue"]) == st.session_state["prediction_queue"].maxlen and all(
+                                p == st.session_state["prediction_queue"][0] for p in st.session_state["prediction_queue"]):
+                            stable_character = st.session_state["prediction_queue"][0]
+                            if stable_character != st.session_state["last_stable_character"]:
+                                st.session_state["last_stable_character"] = stable_character
 
-        # Update placeholders
-        detected_character_placeholder.write(f"**{st.session_state.get('last_stable_character', 'Waiting for detection...')}**")
-        translated_text_placeholder.write(f"{st.session_state['output_string']}")
+                        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 0), 4)
+                    else:
+                        st.error("Model does not have the expected attribute 'n_features_in_'. Check the model type.")
+                        return frame
 
-        # Resize frame for a larger display
-        frame_resized = cv2.resize(frame, (800, 600))  # Adjust width and height as needed
-        FRAME_WINDOW.image(frame_resized, channels="BGR")
+            # Handle the delete action
+            if st.session_state["last_stable_character"] == 'delete':
+                st.session_state["output_string"] = st.session_state["output_string"][:-1]  # Remove the last added character
+                st.session_state["last_stable_character"] = None  # Reset stable character until new one is detected
+                st.write(f"Detected Signs: {st.session_state['output_string']}")
 
-        # Exit condition
-        if st.session_state.get("exit_app"):
-            break
+            # Print the accumulated detected signs in the same line
+            st.write(f"Detected Signs: {st.session_state['output_string']}")
 
-    cap.release()
+            return frame
+
+    webrtc_streamer(key="example", video_transformer_factory=VideoTransformer)
 
 # 📚 Resources Page
 elif menu == "Resources":
