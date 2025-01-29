@@ -4,3 +4,4 @@ scikit-learn==1.6.1
 streamlit==1.41.1
 streamlit-webrtc==0.47.9
 opencv-python-headless
+libgl1
