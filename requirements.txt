@@ -1,4 +1,4 @@
-mediapipe==0.10.20
+mediapipe==0.10.9
 pip==25.0
 scikit-learn==1.6.1
 streamlit==1.41.1
