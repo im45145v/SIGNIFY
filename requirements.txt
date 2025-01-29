@@ -1,6 +1,5 @@
 mediapipe==0.10.20
 opencv-contrib-python==4.11.0.86
-opencv-python==4.11.0.86
 pip==25.0
 scikit-learn==1.6.1
 streamlit==1.41.1
