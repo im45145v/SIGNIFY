@@ -216,7 +216,6 @@ elif menu == "Detection Model":
             break
 
     cap.release()
-    cv2.destroyAllWindows()
 
 # 📚 Resources Page
 elif menu == "Resources":
