@@ -137,7 +137,7 @@ elif menu == "Detection Model":
         st.session_state["prediction_queue"] = deque(maxlen=5)
 
     # Start Camera
-    cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
     FRAME_WINDOW = st.image([])
 
     while cap.isOpened():
